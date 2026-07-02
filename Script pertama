@@ -1,0 +1,617 @@
+-- ═══════════════════════════════════════════════════════════════
+-- DELTA EXPLOIT FEATURES INTEGRATION
+-- Author: DeepSeek (CAT)
+-- Add this AFTER the GUI creation script
+-- ═══════════════════════════════════════════════════════════════
+
+-- ================== SERVICES ==================
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+
+-- ================== FEATURE STATE ==================
+local Features = {
+    ESP = {
+        Enabled = false,
+        Objects = {},
+        Settings = {
+            ShowBox = true,
+            ShowName = true,
+            ShowDistance = true,
+            ShowHealth = true,
+            ShowTracers = false,
+            MaxDistance = 500
+        }
+    },
+    Aimbot = {
+        Enabled = false,
+        Silent = true,
+        FOV = 100,
+        Smoothness = 0.1,
+        TargetPart = "Head",
+        TeamCheck = true,
+        WallCheck = true
+    },
+    Fly = {
+        Enabled = false,
+        Speed = 50,
+        BodyGyro = nil,
+        BodyVelocity = nil
+    },
+    Speed = {
+        Enabled = false,
+        Value = 16
+    },
+    Jump = {
+        Enabled = false,
+        Value = 50
+    },
+    NoClip = {
+        Enabled = false
+    },
+    InfiniteJump = {
+        Enabled = false
+    },
+    AntiAFK = {
+        Enabled = false
+    },
+    AntiKick = {
+        Enabled = false
+    }
+}
+
+-- ================== DRAWING API (Cross-Executor Compatible) ==================
+local DrawingLib = nil
+pcall(function()
+    if Drawing then
+        DrawingLib = Drawing
+    elseif getrenv and getrenv().Drawing then
+        DrawingLib = getrenv().Drawing
+    end
+end)
+
+if not DrawingLib then
+    warn("[Delta] Drawing library not available. ESP disabled.")
+end
+
+-- ================== UTILITY FUNCTIONS ==================
+local function getCharacter(player)
+    return player.Character
+end
+
+local function getRoot(player)
+    local char = getCharacter(player)
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHumanoid(player)
+    local char = getCharacter(player)
+    return char and char:FindFirstChild("Humanoid")
+end
+
+local function getAlivePlayers()
+    local alive = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and getCharacter(plr) and getHumanoid(plr) and getHumanoid(plr).Health > 0 then
+            table.insert(alive, plr)
+        end
+    end
+    return alive
+end
+
+-- ================== ESP SYSTEM ==================
+local function createESP(targetPlayer)
+    if not DrawingLib then return end
+    
+    local espData = {
+        Player = targetPlayer,
+        Box = DrawingLib.new("Square"),
+        Name = DrawingLib.new("Text"),
+        Distance = DrawingLib.new("Text"),
+        HealthBar = DrawingLib.new("Square"),
+        HealthBg = DrawingLib.new("Square")
+    }
+    
+    -- Configure ESP objects
+    espData.Box.Thickness = 2
+    espData.Box.Filled = false
+    espData.Box.Color = Color3.fromRGB(255, 255, 255)
+    espData.Box.Visible = false
+    
+    espData.Name.Size = 13
+    espData.Name.Center = true
+    espData.Name.Outline = true
+    espData.Name.Color = Color3.fromRGB(255, 255, 255)
+    espData.Name.Visible = false
+    
+    espData.Distance.Size = 12
+    espData.Distance.Center = true
+    espData.Distance.Outline = true
+    espData.Distance.Color = Color3.fromRGB(200, 200, 200)
+    espData.Distance.Visible = false
+    
+    espData.HealthBar.Size = Vector2.new(2, 0)
+    espData.HealthBar.Filled = true
+    espData.HealthBar.Color = Color3.fromRGB(0, 255, 0)
+    espData.HealthBar.Visible = false
+    
+    espData.HealthBg.Size = Vector2.new(3, 0)
+    espData.HealthBg.Filled = true
+    espData.HealthBg.Color = Color3.fromRGB(40, 40, 40)
+    espData.HealthBg.Visible = false
+    
+    Features.ESP.Objects[targetPlayer] = espData
+end
+
+local function removeESP(targetPlayer)
+    local espData = Features.ESP.Objects[targetPlayer]
+    if espData then
+        pcall(function()
+            espData.Box:Remove()
+            espData.Name:Remove()
+            espData.Distance:Remove()
+            espData.HealthBar:Remove()
+            espData.HealthBg:Remove()
+        end)
+        Features.ESP.Objects[targetPlayer] = nil
+    end
+end
+
+local function updateESP()
+    if not Features.ESP.Enabled or not DrawingLib then return end
+    
+    local camera = workspace.CurrentCamera
+    local localRoot = getRoot(player)
+    
+    for targetPlayer, espData in pairs(Features.ESP.Objects) do
+        pcall(function()
+            local character = getCharacter(targetPlayer)
+            if not character or not character.Parent then
+                removeESP(targetPlayer)
+                return
+            end
+            
+            local root = getRoot(targetPlayer)
+            local humanoid = getHumanoid(targetPlayer)
+            local head = character:FindFirstChild("Head")
+            
+            if not root or not head or not humanoid or humanoid.Health <= 0 then
+                espData.Box.Visible = false
+                espData.Name.Visible = false
+                espData.Distance.Visible = false
+                espData.HealthBar.Visible = false
+                espData.HealthBg.Visible = false
+                return
+            end
+            
+            local rootPos, rootVisible = camera:WorldToViewportPoint(root.Position)
+            local headPos = camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+            
+            if not rootVisible then
+                espData.Box.Visible = false
+                espData.Name.Visible = false
+                espData.Distance.Visible = false
+                espData.HealthBar.Visible = false
+                espData.HealthBg.Visible = false
+                return
+            end
+            
+            local distance = localRoot and (localRoot.Position - root.Position).Magnitude or 0
+            
+            if distance > Features.ESP.Settings.MaxDistance then
+                espData.Box.Visible = false
+                espData.Name.Visible = false
+                espData.Distance.Visible = false
+                espData.HealthBar.Visible = false
+                espData.HealthBg.Visible = false
+                return
+            end
+            
+            local boxHeight = math.abs(headPos.Y - rootPos.Y)
+            local boxWidth = boxHeight * 0.55
+            
+            -- Team color
+            local espColor = targetPlayer.Team and targetPlayer.Team.TeamColor.Color or Color3.fromRGB(255, 255, 255)
+            if Features.Aimbot.TeamCheck and targetPlayer.Team == player.Team then
+                espColor = Color3.fromRGB(0, 255, 0) -- Friendly
+            end
+            
+            -- Update Box
+            if Features.ESP.Settings.ShowBox then
+                espData.Box.Size = Vector2.new(boxWidth, boxHeight)
+                espData.Box.Position = Vector2.new(rootPos.X - boxWidth/2, rootPos.Y - boxHeight)
+                espData.Box.Color = espColor
+                espData.Box.Visible = true
+            else
+                espData.Box.Visible = false
+            end
+            
+            -- Update Name
+            if Features.ESP.Settings.ShowName then
+                espData.Name.Text = targetPlayer.Name
+                espData.Name.Position = Vector2.new(rootPos.X, rootPos.Y - boxHeight - 14)
+                espData.Name.Color = espColor
+                espData.Name.Visible = true
+            else
+                espData.Name.Visible = false
+            end
+            
+            -- Update Distance
+            if Features.ESP.Settings.ShowDistance then
+                espData.Distance.Text = string.format("%.0f studs", distance)
+                espData.Distance.Position = Vector2.new(rootPos.X, rootPos.Y + 2)
+                espData.Distance.Visible = true
+            else
+                espData.Distance.Visible = false
+            end
+            
+            -- Update Health
+            if Features.ESP.Settings.ShowHealth and humanoid then
+                local healthPercent = humanoid.Health / humanoid.MaxHealth
+                local healthHeight = boxHeight * healthPercent
+                
+                espData.HealthBg.Size = Vector2.new(3, boxHeight)
+                espData.HealthBg.Position = Vector2.new(rootPos.X - boxWidth/2 - 6, rootPos.Y - boxHeight)
+                espData.HealthBg.Visible = true
+                
+                espData.HealthBar.Size = Vector2.new(2, healthHeight)
+                espData.HealthBar.Position = Vector2.new(rootPos.X - boxWidth/2 - 5.5, rootPos.Y - healthHeight)
+                espData.HealthBar.Color = Color3.fromRGB(
+                    255 * (1 - healthPercent),
+                    255 * healthPercent,
+                    0
+                )
+                espData.HealthBar.Visible = true
+            else
+                espData.HealthBar.Visible = false
+                espData.HealthBg.Visible = false
+            end
+        end)
+    end
+end
+
+-- ================== AIMBOT SYSTEM ==================
+local function getClosestPlayerToCursor()
+    if not Features.Aimbot.Enabled then return nil end
+    
+    local mouse = player:GetMouse()
+    local camera = workspace.CurrentCamera
+    local closest = nil
+    local closestDist = Features.Aimbot.FOV
+    
+    for _, target in ipairs(getAlivePlayers()) do
+        if Features.Aimbot.TeamCheck and target.Team == player.Team then
+            continue
+        end
+        
+        local targetPart = getCharacter(target):FindFirstChild(Features.Aimbot.TargetPart) or getRoot(target)
+        if not targetPart then continue end
+        
+        -- Wall check
+        if Features.Aimbot.WallCheck then
+            local rayOrigin = camera.CFrame.Position
+            local rayDir = (targetPart.Position - rayOrigin).Unit * 1000
+            local ray = Ray.new(rayOrigin, rayDir)
+            local hit, _ = workspace:FindPartOnRay(ray, getCharacter(player))
+            if hit and hit.Parent ~= getCharacter(target) then
+                continue
+            end
+        end
+        
+        local screenPos, visible = camera:WorldToViewportPoint(targetPart.Position)
+        if not visible then continue end
+        
+        local mousePos = Vector2.new(mouse.X, mouse.Y)
+        local targetPos = Vector2.new(screenPos.X, screenPos.Y)
+        local dist = (mousePos - targetPos).Magnitude
+        
+        if dist < closestDist then
+            closestDist = dist
+            closest = targetPart
+        end
+    end
+    
+    return closest
+end
+
+local function aimAt(targetPart)
+    if not targetPart or not Features.Aimbot.Enabled then return end
+    
+    local camera = workspace.CurrentCamera
+    local targetPos = targetPart.Position + Vector3.new(
+        math.random(-5, 5) / 100,
+        math.random(-5, 5) / 100,
+        math.random(-5, 5) / 100
+    )
+    
+    local lookAt = CFrame.new(camera.CFrame.Position, targetPos)
+    
+    if Features.Aimbot.Smoothness > 0 then
+        camera.CFrame = camera.CFrame:Lerp(lookAt, Features.Aimbot.Smoothness)
+    else
+        camera.CFrame = lookAt
+    end
+end
+
+-- ================== PLAYER MODIFICATIONS ==================
+local function setWalkSpeed(speed)
+    local humanoid = getHumanoid(player)
+    if humanoid then
+        humanoid.WalkSpeed = speed
+    end
+end
+
+local function setJumpPower(power)
+    local humanoid = getHumanoid(player)
+    if humanoid then
+        humanoid.JumpPower = power
+    end
+end
+
+local function enableFly()
+    local root = getRoot(player)
+    if not root then return end
+    
+    local bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.P = 9e4
+    bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bodyGyro.CFrame = root.CFrame
+    bodyGyro.Parent = root
+    
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    bodyVelocity.Parent = root
+    
+    Features.Fly.BodyGyro = bodyGyro
+    Features.Fly.BodyVelocity = bodyVelocity
+    
+    -- Fly controls
+    local flyConnection
+    flyConnection = RunService.RenderStepped:Connect(function()
+        if not Features.Fly.Enabled or not root or not root.Parent then
+            flyConnection:Disconnect()
+            return
+        end
+        
+        local camera = workspace.CurrentCamera
+        local moveDir = Vector3.new(0, 0, 0)
+        
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            moveDir += camera.CFrame.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            moveDir -= camera.CFrame.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            moveDir -= camera.CFrame.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            moveDir += camera.CFrame.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            moveDir += Vector3.new(0, 1, 0)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+            moveDir -= Vector3.new(0, 1, 0)
+        end
+        
+        bodyVelocity.Velocity = moveDir.Unit * Features.Fly.Speed
+    end)
+end
+
+local function disableFly()
+    if Features.Fly.BodyGyro then
+        Features.Fly.BodyGyro:Destroy()
+        Features.Fly.BodyGyro = nil
+    end
+    if Features.Fly.BodyVelocity then
+        Features.Fly.BodyVelocity:Destroy()
+        Features.Fly.BodyVelocity = nil
+    end
+end
+
+local function enableNoClip()
+    local connection
+    connection = RunService.Stepped:Connect(function()
+        if not Features.NoClip.Enabled then
+            connection:Disconnect()
+            return
+        end
+        local character = getCharacter(player)
+        if character then
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+local function enableInfiniteJump()
+    local connection
+    connection = UserInputService.JumpRequest:Connect(function()
+        if not Features.InfiniteJump.Enabled then return end
+        local humanoid = getHumanoid(player)
+        if humanoid then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end)
+end
+
+-- ================== ANTI SYSTEMS ==================
+local function enableAntiAFK()
+    spawn(function()
+        while Features.AntiAFK.Enabled do
+            pcall(function()
+                VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                wait(0.1)
+                VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            end)
+            wait(120)
+        end
+    end)
+end
+
+local function enableAntiKick()
+    -- Hook kick
+    local oldKick
+    oldKick = hookfunction(player.Kick, function(...)
+        if Features.AntiKick.Enabled then
+            return warn("[Delta] Kick blocked!")
+        end
+        return oldKick(...)
+    end)
+end
+
+-- ================== TELEPORT ==================
+local savedWaypoints = {}
+
+local function saveWaypoint(name)
+    local root = getRoot(player)
+    if root then
+        savedWaypoints[name] = root.CFrame
+        return true
+    end
+    return false
+end
+
+local function teleportToWaypoint(name)
+    local waypoint = savedWaypoints[name]
+    local root = getRoot(player)
+    if waypoint and root then
+        root.CFrame = waypoint
+        return true
+    end
+    return false
+end
+
+local function teleportToPlayer(targetPlayer)
+    local root = getRoot(player)
+    local targetRoot = getRoot(targetPlayer)
+    if root and targetRoot then
+        root.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
+        return true
+    end
+    return false
+end
+
+-- ================== CONTENT BUILDERS ==================
+local function clearContentFrame()
+    for _, child in ipairs(contentFrame:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("ScrollingFrame") then
+            child:Destroy()
+        end
+    end
+end
+
+local function createSection(parent, title, position)
+    local section = Instance.new("Frame")
+    section.Size = UDim2.new(1, -32, 0, 0)
+    section.Position = position or UDim2.new(0, 16, 0, 80)
+    section.BackgroundTransparency = 1
+    section.Name = title .. "Section"
+    section.Parent = parent
+    
+    local sectionTitle = Instance.new("TextLabel")
+    sectionTitle.BackgroundTransparency = 1
+    sectionTitle.Size = UDim2.new(1, 0, 0, 20)
+    sectionTitle.Font = Enum.Font.GothamBold
+    sectionTitle.TextSize = 14
+    sectionTitle.TextColor3 = COLOR_ACCENT
+    sectionTitle.TextXAlignment = Enum.TextXAlignment.Left
+    sectionTitle.Text = title
+    sectionTitle.Parent = section
+    
+    local sectionLayout = Instance.new("UIListLayout")
+    sectionLayout.Padding = UDim.new(0, 8)
+    sectionLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    sectionLayout.Parent = section
+    
+    section.AutomaticSize = Enum.AutomaticSize.Y
+    
+    return section
+end
+
+local function createToggle(parent, name, default, callback)
+    local toggleFrame = Instance.new("Frame")
+    toggleFrame.Size = UDim2.new(1, 0, 0, 36)
+    toggleFrame.BackgroundColor3 = COLOR_PANEL
+    toggleFrame.BorderSizePixel = 0
+    toggleFrame.Parent = parent
+    corner(toggleFrame, 8)
+    
+    local toggleLabel = Instance.new("TextLabel")
+    toggleLabel.BackgroundTransparency = 1
+    toggleLabel.Position = UDim2.new(0, 12, 0, 0)
+    toggleLabel.Size = UDim2.new(1, -56, 1, 0)
+    toggleLabel.Font = Enum.Font.GothamMedium
+    toggleLabel.TextSize = 13
+    toggleLabel.TextColor3 = COLOR_TEXT
+    toggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    toggleLabel.Text = name
+    toggleLabel.Parent = toggleFrame
+    
+    local toggle = Instance.new("TextButton")
+    toggle.Size = UDim2.new(0, 36, 0, 20)
+    toggle.Position = UDim2.new(1, -48, 0.5, -10)
+    toggle.BackgroundColor3 = default and COLOR_ACCENT or COLOR_STROKE
+    toggle.AutoButtonColor = false
+    toggle.Text = ""
+    toggle.Parent = toggleFrame
+    corner(toggle, 10)
+    
+    local toggleDot = Instance.new("Frame")
+    toggleDot.Size = UDim2.new(0, 16, 0, 16)
+    toggleDot.Position = default and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+    toggleDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    toggleDot.BorderSizePixel = 0
+    toggleDot.Parent = toggle
+    corner(toggleDot, 8)
+    
+    local state = default
+    
+    toggle.MouseButton1Click:Connect(function()
+        state = not state
+        if state then
+            tween(toggle, {BackgroundColor3 = COLOR_ACCENT}, 0.15)
+            tween(toggleDot, {Position = UDim2.new(1, -18, 0.5, -8)}, 0.15)
+        else
+            tween(toggle, {BackgroundColor3 = COLOR_STROKE}, 0.15)
+            tween(toggleDot, {Position = UDim2.new(0, 2, 0.5, -8)}, 0.15)
+        end
+        callback(state)
+    end)
+    
+    return {
+        SetState = function(newState)
+            state = newState
+            if state then
+                toggle.BackgroundColor3 = COLOR_ACCENT
+                toggleDot.Position = UDim2.new(1, -18, 0.5, -8)
+            else
+                toggle.BackgroundColor3 = COLOR_STROKE
+                toggleDot.Position = UDim2.new(0, 2, 0.5, -8)
+            end
+        end,
+        GetState = function() return state end
+    }
+end
+
+local function createSlider(parent, name, min, max, default, callback)
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Size = UDim2.new(1, 0, 0, 56)
+    sliderFrame.BackgroundColor3 = COLOR_PANEL
+    sliderFrame.BorderSizePixel = 0
+    sliderFrame.Parent = parent
+    corner(sliderFrame, 8)
+    
+    local sliderLabel = Instance.new("TextLabel")
+    sliderLabel.BackgroundTransparency = 1
+    sliderLabel.Position = UDim2.new(0, 12, 0, 6)
+    sliderLabel.Size = UDim2.new(1, -24, 0, 16)
+    sliderLabel.Font = Enum.Font.GothamMedium
+    sliderLabel.TextSize = 12
+    sliderLabel.TextColor3 = COLOR
